@@ -33,3 +33,9 @@ server:
 eval:
   harness: benchmarkqed-lite    # local-vs-global query split → decide if a graph is needed (P3 gate)
   graph: off                    # LazyGraphRAG enabled only when eval justifies it
+  top_k: 10                     # k for recall@k during evaluation
+  n_local: 30                   # max probes per scope (local + global)
+  thresholds:
+    local_recall_ok: 0.6        # below this -> fix retrieval before anything else
+    global_recall_ok: 0.7       # at/above this -> hybrid gathers distributed evidence; no graph
+    gap: 0.25                   # local-minus-global gap that flags routing/graph as candidates
