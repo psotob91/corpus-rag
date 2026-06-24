@@ -1,0 +1,35 @@
+# corpus-rag recipe — COMMIT this file; the built index (.rag/) is gitignored and
+# regenerated with `make index`. This is the single source of truth for how the
+# corpus is ingested, indexed, and retrieved.
+
+corpus:
+  outputs_dir: outputs          # where ingested products (OUTPUT_LAYOUT) live
+  raw_dir: corpus               # input PDFs (DROP mode) — gitignored
+
+index:
+  backend: lancedb
+  path: .rag/corpus.lance       # gitignored; rebuild from outputs/
+  embedder:
+    provider: fastembed         # local ONNX, no GPU
+    model: BAAI/bge-small-en-v1.5
+    dim: 384
+  chunking: from_ingest         # use chunks.jsonl from ingest; do NOT re-chunk
+  include_artifacts: true       # index table/figure/formula captions alongside text
+
+retrieve:
+  mode: hybrid                  # dense + BM25, fused
+  fusion: rrf
+  rrf_k: 60
+  top_k: 8
+  rerank:
+    enabled: false              # OFF by default — can hurt on table-heavy corpora
+    model: BAAI/bge-reranker-base
+
+server:
+  name: corpus                  # MCP server name
+  transport: stdio
+  tools: [search_corpus, get_document, get_table, get_figure, get_formula]
+
+eval:
+  harness: benchmarkqed-lite    # local-vs-global query split → decide if a graph is needed (P3 gate)
+  graph: off                    # LazyGraphRAG enabled only when eval justifies it

@@ -1,0 +1,32 @@
+# --- the BUILT index and model caches are derived; never commit them ---
+.rag/
+*.lance/
+.fastembed_cache/
+.cache/
+
+# --- corpus inputs and intermediate fetches (keep the recipe, not the data) ---
+corpus/*
+!corpus/.gitkeep
+corpus/_raw/
+corpus/_fetched/
+
+# --- ingested products: keep the layout/contract, ignore bulk artifacts as needed ---
+outputs/*
+!outputs/.gitkeep
+!outputs/OUTPUT_LAYOUT.md
+
+# --- python ---
+.venv/
+__pycache__/
+*.pyc
+
+# --- secrets ---
+.env
+.env.*
+!.env.example
+
+# --- logs / misc ---
+*.log
+
+# test cache
+.pytest_cache/
