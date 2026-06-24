@@ -2,28 +2,27 @@
 # corpus-rag — scientific-corpus RAG (all-in-one: fetch + ingest + index +
 # retrieve + MCP). Package manager: uv.
 # ============================================================================
-# SCAFFOLD PHASE — dependencies are DECLARED with lower bounds but NOT installed
-# yet. uv.lock will pin exact versions after the first `uv sync`. Heavy / GPU
-# pieces (VLM, MinerU) are isolated as OPTIONAL extras, like ms-rie's MinerU env.
+# P1 (MVP) — core deps installed and pinned in uv.lock. Heavy / GPU pieces
+# (docling, VLM) are isolated as OPTIONAL extras, like ms-rie's MinerU env.
 #
-#   uv sync                 # core: ingest + index + serve
+#   uv sync                 # core: lean ingest + index + retrieve + serve
+#   uv sync --extra docling # full structural extraction (heavy; pulls torch)
 #   uv sync --extra rerank  # add cross-encoder reranker (optional)
-#   uv sync --extra vlm     # add VLM/OCR for scanned PDFs (heavy; maybe GPU)
 #   uv run python -m corpus_rag.server.mcp_server
 # ============================================================================
 
 [project]
 name = "corpus-rag"
-version = "0.0.0"
+version = "0.1.0"
 description = "Scientific-corpus RAG: fetch + multimodal ingest + hybrid index + MCP server."
 readme = "README.md"
 requires-python = ">=3.10"
 
 dependencies = [
-    # --- ingest (multimodal extraction; rescued from ms-rie) ---
-    "docling>=2.0",        # structural PDF → markdown (native, RT-DETR layout)
-    "pymupdf>=1.24",       # CMCM deterministic-first traits (no VLM)
-    "lark>=1.1",           # sympy latex backend for formula-coherence checks
+    # --- fetch (DOI -> open-access PDF cascade) ---
+    "requests>=2.31",      # ethical OA fetch (Europe PMC / Unpaywall / Crossref)
+    # --- ingest (LEAN, no torch): PyMuPDF text/table/figure extraction ---
+    "pymupdf>=1.24",       # CMCM traits + text/table/figure extraction (no GPU)
     "jsonschema>=4.21",    # validate table twins against a schema
     # --- index + retrieve (hybrid, local) ---
     "lancedb>=0.13",       # embedded vector + full-text (BM25) + hybrid + rerank
@@ -35,8 +34,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-rerank = ["sentence-transformers>=3.0"]   # cross-encoder reranker (off by default)
-vlm    = ["transformers>=4.40", "pillow>=10.0"]  # VLM/OCR for scanned PDFs (heavy)
+docling = ["docling>=2.0", "lark>=1.1"]          # full structural extraction (heavy; pulls torch)
+rerank  = ["sentence-transformers>=3.0"]         # cross-encoder reranker (off by default)
+vlm     = ["transformers>=4.40", "pillow>=10.0"] # VLM captions for scanned PDFs (heavy)
 
 [project.scripts]
 corpus-rag = "corpus_rag.server.mcp_server:main"

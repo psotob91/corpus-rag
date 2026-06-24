@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "corpus": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "C:/workspace/corpus-rag",
+        "python",
+        "-m",
+        "corpus_rag.server.mcp_server"
+      ]
+    }
+  }
+}
