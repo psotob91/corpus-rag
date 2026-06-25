@@ -31,6 +31,36 @@ retrieve:
     global_candidate_k: 120     # deeper candidate pool for global queries
     global_top_k: 50            # wider returned set for global (k-sweep: evidence recovers ~k=50)
 
+graph:                          # P3 LazyGraphRAG concept co-occurrence retriever (token-free)
+  enabled: false                # built only when eval (P3 gate) justifies it
+  path: .rag/graph              # gitignored; rebuild from outputs/ (commit the recipe, not the index)
+  embedder:
+    model: BAAI/bge-small-en-v1.5  # MUST match index embedder or cosines are meaningless
+  min_concept_freq: 2           # drop concepts in < N chunks (SMALL-CORPUS: pilot may need 1)
+  min_concept_chars: 3          # reject too-short concept strings
+  max_concept_tokens: 4         # reject overlong noun-chunk spans
+  max_concepts: 4000            # cap surviving concepts (highest-freq kept)
+  max_concepts_per_chunk: 40    # bound O(|S|^2) edge blowup on concept-dense chunks
+  drop_generic: true            # drop bare generic single-word concepts (allowed in multiword)
+  min_edge_weight: 2            # drop weak co-occurrence edges (SMALL-CORPUS: pilot may need 1)
+  max_node_degree: null         # optional hub pruning (off)
+  leiden_resolution: 1.0        # community granularity (higher -> more, smaller communities)
+  leiden_seed: 42               # deterministic Leiden partition
+  seed_sim_min: 0.30            # min cosine(query, concept) to seed
+  seed_top_n: 12                # cap seed concepts
+  seed_concepts: []             # operator override: force these as seeds if present
+  relevant_communities: 5       # confine breadth-first expansion to top-N communities
+  community_prior_w: 0.5        # weight of centroid-similarity in community ranking
+  max_hops: 2                   # breadth-first hops from seeds
+  hop_decay: 0.5                # activation decay per hop
+  budget_concepts: 200          # hard 'lazy' cap on concepts visited
+  budget_chunks: 600            # hard cap on candidate chunks gathered
+  fusion: accum                 # accum | rrf | hybrid
+  rrf_k: 60                     # for fusion=rrf
+  alpha: 0.5                    # for fusion=hybrid (weight of accumulation vs rrf)
+  multi_hit_w: 0.3              # bridging bonus weight (chunks spanning many query concepts)
+  fallback_hybrid: false        # on no-seed/no-graph: false -> [], true -> search_corpus
+
 server:
   name: corpus                  # MCP server name
   transport: stdio

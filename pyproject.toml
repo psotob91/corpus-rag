@@ -37,6 +37,7 @@ dependencies = [
 docling = ["docling>=2.0", "lark>=1.1"]          # full structural extraction (heavy; pulls torch)
 rerank  = ["sentence-transformers>=3.0"]         # cross-encoder reranker (off by default)
 vlm     = ["transformers>=4.40", "pillow>=10.0"] # VLM captions for scanned PDFs (heavy)
+graph   = ["spacy>=3.7", "networkx>=3.2", "leidenalg>=0.10", "python-igraph>=0.11"]  # LazyGraphRAG (P3)
 
 [project.scripts]
 corpus-rag = "corpus_rag.server.mcp_server:main"
