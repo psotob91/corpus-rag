@@ -11,6 +11,7 @@ ingest(pdf_path) -> Intermediate:
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from collections import Counter
@@ -180,7 +181,7 @@ def build_sections(doc) -> tuple[list[dict], str]:
     return sections, markdown
 
 
-def ingest(pdf_path: str) -> Intermediate:
+def ingest_pymupdf(pdf_path: str) -> Intermediate:
     """Ingest one PDF into a validated Intermediate (lean PyMuPDF route)."""
     import fitz  # lazy import
 
@@ -219,6 +220,32 @@ def ingest(pdf_path: str) -> Intermediate:
     return validate_intermediate(intermediate)
 
 
+def _docling_available() -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec("docling") is not None
+
+
+def ingest(pdf_path: str, engine: str = "auto") -> Intermediate:
+    """Ingest one PDF, selecting the extraction engine.
+
+    engine='auto' (default) uses docling if installed (better structure +
+    formula->LaTeX), else the lean PyMuPDF route. Force with 'docling' /
+    'pymupdf' or the CORPUS_RAG_INGEST_ENGINE env var.
+    """
+    eng = (engine or "auto").lower()
+    if eng == "auto":
+        eng = (
+            os.environ.get("CORPUS_RAG_INGEST_ENGINE", "").strip().lower()
+            or ("docling" if _docling_available() else "pymupdf")
+        )
+    if eng == "docling":
+        from corpus_rag.ingest.docling_pipeline import ingest_docling
+
+        return ingest_docling(pdf_path)
+    return ingest_pymupdf(pdf_path)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI: ingest the given PDF, write the OUTPUT_LAYOUT product, print the dir."""
     from corpus_rag.ingest.write_product import write_product
@@ -234,9 +261,10 @@ def main(argv: list[str] | None = None) -> int:
     inter = ingest(pdf_path)
     out_dir = write_product(inter, outputs_dir=outputs_dir)
     print(
-        "ingested %s -> %s (sections=%d tables=%d figures=%d formulas=%d)"
+        "ingested %s [%s] -> %s (sections=%d tables=%d figures=%d formulas=%d)"
         % (
             inter["document"],
+            inter.get("engine", "?"),
             out_dir,
             len(inter.get("sections", [])),
             inter["n_tables"],
