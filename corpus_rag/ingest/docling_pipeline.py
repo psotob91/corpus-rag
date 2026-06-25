@@ -36,7 +36,7 @@ def _text(item: Any) -> str:
     return (getattr(item, "text", "") or "").strip()
 
 
-def _converter(do_formula: bool):
+def _converter(do_formula: bool, do_ocr: bool = False):
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
@@ -48,6 +48,13 @@ def _converter(do_formula: bool):
             opts.do_formula_enrichment = True
         except Exception:
             pass
+    # OCR scanned pages; skip OCR for born-digital (faster). The option name/engine
+    # varies across docling 2.x, so set it defensively — if unavailable, docling
+    # falls back to its default pipeline and the class is still recorded honestly.
+    try:
+        opts.do_ocr = bool(do_ocr)
+    except Exception:
+        pass
     return DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
     )
@@ -158,14 +165,32 @@ def _formulas_from_doc(doc: Any, slug: str) -> list[dict]:
     return out
 
 
-def ingest_docling(pdf_path: str, do_formula: bool = True) -> Intermediate:
-    """Ingest one PDF into a validated Intermediate via docling (structural route)."""
+def ingest_docling(
+    pdf_path: str, do_formula: bool = True, do_ocr: bool | None = None
+) -> Intermediate:
+    """Ingest one PDF into a validated Intermediate via docling (structural route).
+
+    do_ocr=None auto-enables OCR for scan classes (pdf-scan-ocr/-image) and skips
+    it for born-digital PDFs; pass True/False to force.
+    """
     path = Path(pdf_path)
     if not path.is_file():
         raise FileNotFoundError(f"pdf not found: {path}")
 
     slug = slug_from_path(pdf_path)
-    conv = _converter(do_formula)
+
+    # Classify first (cheap, fitz-only) so we can OCR-hint docling for scans.
+    try:
+        from corpus_rag.ingest.classify import classify
+        traits = classify(str(path))
+    except Exception:
+        traits = {"source_class": "pdf-native", "route": "pdf-native",
+                  "source_confidence": 0.0, "signals": {}}
+
+    if do_ocr is None:
+        do_ocr = traits.get("source_class", "pdf-native") in ("pdf-scan-ocr", "pdf-scan-image")
+
+    conv = _converter(do_formula, do_ocr=do_ocr)
     doc = conv.convert(str(path)).document
 
     sections = _sections_from_doc(doc)
@@ -173,12 +198,6 @@ def ingest_docling(pdf_path: str, do_formula: bool = True) -> Intermediate:
     figures = _figures_from_doc(doc, slug)
     formulas = _formulas_from_doc(doc, slug)
     markdown = doc.export_to_markdown()
-
-    try:  # cheap deterministic traits (reuse the lean classifier)
-        from corpus_rag.ingest.classify import classify
-        traits = classify(str(path))
-    except Exception:
-        traits = {"source_class": "pdf-native", "route": "docling"}
 
     intermediate: dict = {
         "document": slug,
@@ -193,6 +212,8 @@ def ingest_docling(pdf_path: str, do_formula: bool = True) -> Intermediate:
         "engine": "docling",
         "device": "cpu",
         "source_class": traits.get("source_class", "pdf-native"),
+        "source_confidence": traits.get("source_confidence"),
+        "source_signals": traits.get("signals"),
         "route": "docling",
         "traits": traits,
     }

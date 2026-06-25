@@ -214,6 +214,8 @@ def ingest_pymupdf(pdf_path: str) -> Intermediate:
         "engine": "pymupdf",
         "device": "cpu",
         "source_class": traits["source_class"],
+        "source_confidence": traits.get("source_confidence"),
+        "source_signals": traits.get("signals"),
         "route": traits["route"],
         "traits": traits,
     }

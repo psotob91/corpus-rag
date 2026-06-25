@@ -31,10 +31,15 @@ class Intermediate(TypedDict, total=False):
     n_tables: int
     n_figures: int
     n_formulas: int
-    engine: str                 # 'docling' | ...
+    engine: str                 # 'docling' | 'pymupdf' | ...
     device: str                 # 'cpu' | 'cuda'
     ocr_status: str             # 'degraded' | 'vlm' (scanned route only)
     pmcid: str                  # JATS route only
+    sections: list[dict]        # heading-sections for chunking (ingest)
+    route: str                  # extraction path
+    source_class: str           # 'pdf-native' | 'pdf-scan-ocr' | 'pdf-scan-image'
+    source_confidence: float    # classifier confidence [0, 1]
+    source_signals: dict        # per-document classification evidence
 
 
 INTERMEDIATE_REQUIRED = ("document", "markdown", "tables", "figures", "formulas")

@@ -180,6 +180,7 @@ def write_product(intermediate: dict, outputs_dir: str = "outputs") -> str:
     meta = {
         "id": slug,
         "source": intermediate.get("source_class", "pdf-native"),
+        "source_confidence": intermediate.get("source_confidence"),
         "route": intermediate.get("route", intermediate.get("source_class", "pdf-native")),
         "doi": None,
         "status": status,
@@ -192,6 +193,9 @@ def write_product(intermediate: dict, outputs_dir: str = "outputs") -> str:
         "role": None,
         "errors": errors,
     }
+    signals = intermediate.get("source_signals")
+    if signals:
+        meta["source_signals"] = signals
     _write_json(out_dir / "document.meta.json", meta)
 
     return str(out_dir)
