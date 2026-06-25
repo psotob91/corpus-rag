@@ -54,12 +54,16 @@ eval:
 
 @pytest.fixture()
 def corpus(tmp_path: Path) -> Path:
+    sources = {"d1": "pdf-native", "d2": "pdf-scan-ocr"}  # one native, one scanned
     for doc in ("d1", "d2"):
         d = tmp_path / "outputs" / doc
         d.mkdir(parents=True)
         rows = [c for c in CHUNKS if c["doc_id"] == doc]
         (d / "chunks.jsonl").write_text(
             "\n".join(json.dumps(c) for c in rows), encoding="utf-8"
+        )
+        (d / "document.meta.json").write_text(
+            json.dumps({"id": doc, "source": sources[doc]}), encoding="utf-8"
         )
     cfg = tmp_path / "rag.config.yaml"
     cfg.write_text(CONFIG, encoding="utf-8")
@@ -87,3 +91,16 @@ def test_local_retrieval_is_healthy(corpus: Path):
     build_index(str(corpus))
     res = run_eval(str(corpus))
     assert res["local"]["recall_at_k"] >= 0.5
+
+
+def test_eval_stratifies_by_doc_class(corpus: Path):
+    build_index(str(corpus))
+    res = run_eval(str(corpus))
+    assert res["n_docs_native"] == 1 and res["n_docs_scan"] == 1
+    strata = res["strata"]
+    assert strata["local"]["native"]["n"] >= 1
+    assert strata["local"]["scan"]["n"] >= 1
+    # the cross-cutting 'warfarin' probe spans d1(native)+d2(scan) -> any-scan => scan
+    assert strata["global"]["scan"]["n"] >= 1
+    assert strata["global"]["native"]["n"] == 0
+    assert all("doc_class" in p and "n_scan_gold" in p for p in res["per_probe"])

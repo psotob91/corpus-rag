@@ -80,6 +80,29 @@ def _load_chunks(outputs_dir: Path) -> list[dict[str, Any]]:
     return chunks
 
 
+def _load_doc_sources(outputs_dir: Path) -> dict[str, str]:
+    """slug -> 'native' | 'scan' | 'unknown' from each document.meta.json `source`.
+
+    Both scan classes (pdf-scan-ocr / pdf-scan-image) collapse to the coarse
+    'scan' axis so per-stratum cells aren't too small to read.
+    """
+    out: dict[str, str] = {}
+    if not outputs_dir.is_dir():
+        return out
+    for slug in sorted(p for p in outputs_dir.iterdir() if p.is_dir()):
+        mp = slug / "document.meta.json"
+        if not mp.is_file():
+            continue
+        try:
+            meta = json.loads(mp.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        src = str(meta.get("source") or "")
+        key = meta.get("id") or slug.name
+        out[key] = "native" if src == "pdf-native" else ("scan" if src.startswith("pdf-scan") else "unknown")
+    return out
+
+
 def _keywords(text: str, n: int) -> list[str]:
     toks = [t.lower() for t in _WORD.findall(text or "")]
     toks = [t for t in toks if t not in _STOP]
@@ -110,7 +133,23 @@ def generate_probes(
     text_chunks.sort(key=lambda c: str(c.get("chunk_id", "")))  # deterministic
     probes: list[dict[str, Any]] = []
 
-    for c in text_chunks[:n_local]:
+    # LOCAL: round-robin across docs so EVERY doc (incl. scanned) is represented,
+    # not just the alphabetically-first ones (otherwise the local-scan stratum is empty).
+    by_doc: dict[str, list] = {}
+    for c in text_chunks:
+        by_doc.setdefault(str(c.get("doc_id")), []).append(c)
+    doc_lists = [by_doc[d] for d in sorted(by_doc)]
+    local_chunks: list = []
+    depth = 0
+    while len(local_chunks) < n_local and any(depth < len(dl) for dl in doc_lists):
+        for dl in doc_lists:
+            if depth < len(dl):
+                local_chunks.append(dl[depth])
+                if len(local_chunks) >= n_local:
+                    break
+        depth += 1
+
+    for c in local_chunks:
         kws = _keywords(c["text"], 5)
         if len(kws) < 3:
             continue
@@ -168,19 +207,37 @@ def run_eval(config_path: str = "rag.config.yaml", top_k: int | None = None) -> 
         outputs_dir = config_dir / outputs_dir
 
     chunks = _load_chunks(outputs_dir)
+    doc_sources = _load_doc_sources(outputs_dir)
+    cid_to_doc = {c.get("chunk_id"): c.get("doc_id") for c in chunks}
     probes = generate_probes(chunks, r["n_local"], k)
+
+    def _probe_class(probe: dict[str, Any]) -> str:
+        classes = {doc_sources.get(cid_to_doc.get(cid), "unknown") for cid in probe["gold_chunk_ids"]}
+        if probe["scope"] == "local":
+            return next(iter(classes)) if classes else "unknown"
+        # GLOBAL: any-scan rule — a cross-cutting answer is only as good as its
+        # weakest evidence source, so one scanned gold doc taints the probe.
+        if "scan" in classes:
+            return "scan"
+        if classes == {"native"}:
+            return "native"
+        return "unknown"
 
     per: list[dict[str, Any]] = []
     for p in probes:
         hits = search_corpus(p["question"], top_k=k, config_path=config_path)
         rids = [h["chunk"]["chunk_id"] for h in hits]
+        n_scan_gold = sum(
+            1 for cid in p["gold_chunk_ids"] if doc_sources.get(cid_to_doc.get(cid)) == "scan"
+        )
         per.append({
-            "id": p["id"], "scope": p["scope"],
-            "n_gold": len(p["gold_chunk_ids"]), **_score(p, rids),
+            "id": p["id"], "scope": p["scope"], "doc_class": _probe_class(p),
+            "n_gold": len(p["gold_chunk_ids"]), "n_scan_gold": n_scan_gold,
+            **_score(p, rids),
         })
 
-    def agg(scope: str) -> dict[str, Any]:
-        rows = [x for x in per if x["scope"] == scope]
+    def agg(scope: str, cls: str | None = None) -> dict[str, Any]:
+        rows = [x for x in per if x["scope"] == scope and (cls is None or x["doc_class"] == cls)]
         n = len(rows)
         if not n:
             return {"n": 0, "recall_at_k": None, "hit_rate": None, "mrr": None}
@@ -191,19 +248,49 @@ def run_eval(config_path: str = "rag.config.yaml", top_k: int | None = None) -> 
             "mrr": round(sum(x["rr"] for x in rows) / n, 4),
         }
 
+    strata = {
+        scope: {cls: agg(scope, cls) for cls in ("native", "scan")}
+        for scope in ("local", "global")
+    }
+
     return {
         "k": k,
         "n_chunks": len(chunks),
         "n_probes": len(probes),
+        "n_docs_native": sum(1 for v in doc_sources.values() if v == "native"),
+        "n_docs_scan": sum(1 for v in doc_sources.values() if v == "scan"),
         "local": agg("local"),
         "global": agg("global"),
+        "strata": strata,
         "thresholds": {kk: r[kk] for kk in ("local_recall_ok", "global_recall_ok", "gap")},
         "per_probe": per,
     }
 
 
+def _stratum_note(result: dict[str, Any]) -> str | None:
+    """Surface a native-vs-scan global-recall gap (>=0.25) as an actionable note."""
+    g = result.get("strata", {}).get("global", {})
+    gn, gs = (g.get("native") or {}), (g.get("scan") or {})
+    rn, rs, nn, ns = gn.get("recall_at_k"), gs.get("recall_at_k"), gn.get("n", 0), gs.get("n", 0)
+    if rn is None or rs is None or nn < 3 or ns < 3:
+        return None
+    if (rn - rs) >= 0.25:
+        return (f"Global recall@{result['k']} is {rn:.2f} on TEXT-NATIVE docs vs {rs:.2f} on "
+                f"SCANNED (n_native={nn}, n_scan={ns}): the bottleneck is OCR/ingestion quality, "
+                "NOT a missing graph. Fix ingestion (docling OCR re-ingest) before P3.")
+    return None
+
+
 def decide(result: dict[str, Any]) -> dict[str, Any]:
     """Map metrics -> an explicit, thresholded recommendation (with the numbers)."""
+    out = _decide_core(result)
+    note = _stratum_note(result)
+    if note:
+        out["stratum_note"] = note
+    return out
+
+
+def _decide_core(result: dict[str, Any]) -> dict[str, Any]:
     loc = result["local"]["recall_at_k"]
     glo = result["global"]["recall_at_k"]
     th = result["thresholds"]
@@ -243,10 +330,16 @@ def _report_md(result: dict[str, Any], decision: dict[str, Any]) -> str:
     def row(name: str, d: dict[str, Any]) -> str:
         return f"| {name} | {d['n']} | {d['recall_at_k']} | {d['hit_rate']} | {d['mrr']} |"
 
-    return "\n".join([
+    def srow(scope: str, cls: str) -> str:
+        d = (result.get("strata", {}).get(scope, {}).get(cls)
+             or {"n": 0, "recall_at_k": None, "hit_rate": None, "mrr": None})
+        return f"| {scope} | {cls} | {d['n']} | {d['recall_at_k']} | {d['hit_rate']} | {d['mrr']} |"
+
+    lines = [
         "# corpus-rag eval (BenchmarkQED-lite)",
         "",
         f"- chunks indexed: {result['n_chunks']}  |  probes: {result['n_probes']}  |  k = {result['k']}",
+        f"- docs: native={result.get('n_docs_native', '?')}  scan={result.get('n_docs_scan', '?')}",
         f"- thresholds: {result['thresholds']}",
         "",
         "| scope | n | recall@k | hit_rate | MRR |",
@@ -254,15 +347,29 @@ def _report_md(result: dict[str, Any], decision: dict[str, Any]) -> str:
         row("local (single-source)", result["local"]),
         row("global (multi-source)", result["global"]),
         "",
+        "### Stratified by document class (native vs scanned)",
+        "",
+        "| scope | class | n | recall@k | hit_rate | MRR |",
+        "|---|---|---|---|---|---|",
+        srow("global", "native"),
+        srow("global", "scan"),
+        srow("local", "native"),
+        srow("local", "scan"),
+        "",
         f"## Decision: {decision['decision']}",
         "",
         decision["rationale"],
+    ]
+    if decision.get("stratum_note"):
+        lines += ["", f"**Stratum note:** {decision['stratum_note']}"]
+    lines += [
         "",
         "> Probes are templated from chunk content (deterministic, no LLM). The "
         "local-vs-global *gap* is the robust signal; absolute scores are approximate. "
-        "For a budget decision, regenerate probes from real user questions before "
-        "building a graph.",
-    ])
+        "Global probes use the any-scan rule (scan if ANY gold doc is scanned). "
+        "For a budget decision, regenerate probes from real user questions.",
+    ]
+    return "\n".join(lines)
 
 
 def evaluate(
