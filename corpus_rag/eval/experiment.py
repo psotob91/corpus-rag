@@ -8,6 +8,9 @@ ASCII-only output.
 """
 from __future__ import annotations
 
+import json
+import re
+import statistics as _st
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -148,6 +151,123 @@ def factorial(
     return {"B": B, "n_global_probes": len(probes), "n_sub": n_sub, "rounds": rounds, "cells": res}
 
 
+_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
+
+
+def _doc_features(config_path: str) -> dict[str, dict]:
+    """slug -> document-level features usable as effect modifiers."""
+    out: dict[str, dict] = {}
+    od = _outputs_dir(config_path)
+    if not od.is_dir():
+        return out
+    for d in sorted(p for p in od.iterdir() if p.is_dir()):
+        mp = d / "document.meta.json"
+        if not mp.is_file():
+            continue
+        try:
+            m = json.loads(mp.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        slug = m.get("id", d.name)
+        ym = _YEAR_RE.search(slug)
+        out[slug] = {
+            "source": "native" if m.get("source") == "pdf-native" else "scan",
+            "year": int(ym.group()) if ym else None,
+            "n_chunks": m.get("n_chunks", 0) or 0,
+            "has_tables": (m.get("n_tables", 0) or 0) > 0,
+            "has_formulas": (m.get("n_formulas", 0) or 0) > 0,
+        }
+    return out
+
+
+def _doc_freq(text_chunks: list[dict]) -> dict[str, int]:
+    df: dict[str, int] = defaultdict(int)
+    for c in text_chunks:
+        for t in set(_keywords(c.get("text", "") or "", 12)):
+            df[t] += 1
+    return df
+
+
+def hard_local_probes(chunks: list[dict], per_doc: int = 8, n_terms: int = 2) -> list[dict]:
+    """Harder, non-degenerate local probes: query a chunk by its MOST COMMON
+    (ambiguous) terms, so the exact chunk is no longer trivially top-ranked. This
+    gives local recall real variance (the easy version saturated at 1.0).
+    """
+    text = [c for c in chunks if c.get("kind") == "text" and c.get("text")]
+    df = _doc_freq(text)
+    by_doc: dict[str, list] = defaultdict(list)
+    for c in text:
+        by_doc[str(c.get("doc_id"))].append(c)
+    probes = []
+    for doc in sorted(by_doc):
+        for c in sorted(by_doc[doc], key=lambda c: str(c.get("chunk_id")))[:per_doc]:
+            terms = sorted(_keywords(c["text"], 8), key=lambda t: -df.get(t, 0))[:n_terms]
+            if len(terms) < n_terms:
+                continue
+            probes.append({
+                "id": f"hardlocal::{c['chunk_id']}", "question": " ".join(terms),
+                "scope": "local", "gold_chunk_ids": [c["chunk_id"]], "doc_id": doc,
+            })
+    return probes
+
+
+def eval_local_difficulty(
+    config_path: str = "rag.config.yaml", ks: tuple = (1, 3, 5, 10), per_doc: int = 8
+) -> dict[str, Any]:
+    chunks = _load_chunks(_outputs_dir(config_path))
+    probes = hard_local_probes(chunks, per_doc)
+    at: dict[int, list] = {k: [] for k in ks}
+    mrrs = []
+    for p in probes:
+        ranked = [h["chunk"]["chunk_id"] for h in _ids(p["question"], max(ks), config_path)]
+        gid = p["gold_chunk_ids"][0]
+        for k in ks:
+            at[k].append(1.0 if gid in ranked[:k] else 0.0)
+        rr = 0.0
+        for rank, cid in enumerate(ranked, 1):
+            if cid == gid:
+                rr = 1.0 / rank
+                break
+        mrrs.append(rr)
+    return {
+        "n": len(probes),
+        "mrr": round(_st.mean(mrrs), 4) if mrrs else None,
+        "recall_at_k": {k: round(sum(v) / len(v), 4) if v else None for k, v in at.items()},
+        "sd_at_k": {k: round(_st.stdev(v), 4) if len(v) > 1 else 0.0 for k, v in at.items()},
+    }
+
+
+def effect_modifiers(
+    config_path: str = "rag.config.yaml", k: int = 10, per_doc: int = 8
+) -> dict[str, Any]:
+    """Stratify (hard) local recall by document features -> which paper traits
+    MODIFY retrieval performance (so you can pick an approach per paper type)."""
+    chunks = _load_chunks(_outputs_dir(config_path))
+    feats = _doc_features(config_path)
+    probes = hard_local_probes(chunks, per_doc)
+    rows = []
+    for p in probes:
+        ranked = [h["chunk"]["chunk_id"] for h in _ids(p["question"], k, config_path)]
+        rows.append((1.0 if p["gold_chunk_ids"][0] in ranked else 0.0, feats.get(p["doc_id"], {})))
+
+    def strat(name, keyfn):
+        g: dict[str, list] = defaultdict(list)
+        for rec, f in rows:
+            key = keyfn(f)
+            if key is not None:
+                g[str(key)].append(rec)
+        return name, {kk: {"n": len(v), "recall": round(_st.mean(v), 4)} for kk, v in sorted(g.items())}
+
+    mods = dict([
+        strat("pdf_type", lambda f: f.get("source")),
+        strat("has_tables", lambda f: f.get("has_tables")),
+        strat("has_formulas", lambda f: f.get("has_formulas")),
+        strat("era", lambda f: None if f.get("year") is None else ("<2010" if f["year"] < 2010 else ">=2010")),
+        strat("doc_size", lambda f: "small(<40c)" if (f.get("n_chunks") or 0) < 40 else "large(>=40c)"),
+    ])
+    return {"k": k, "n": len(rows), "modifiers": mods}
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     config_path = argv[0] if argv else "rag.config.yaml"
@@ -156,6 +276,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"== chunk-type retrieval (recall@{ck['k']}) ==")
     for kind, d in sorted(ck["by_kind"].items()):
         print(f"  {kind:8} recall={d['recall_at_k']}  (probed {d['n_probed']}/{d['n_total']})")
+
+    ld = eval_local_difficulty(config_path)
+    print(f"\n== local difficulty (HARD probes, n={ld['n']}) -- now non-degenerate ==")
+    print("  recall:  " + "  ".join(
+        f"@{k}={ld['recall_at_k'][k]}(sd{ld['sd_at_k'][k]})" for k in (1, 3, 5, 10)
+    ) + f"  MRR={ld['mrr']}")
+
+    em = effect_modifiers(config_path)
+    print(f"\n== effect modifiers on hard-local recall@{em['k']} (n={em['n']}; pilot = small cells) ==")
+    for name, levels in em["modifiers"].items():
+        cells = "  ".join(f"{lvl}={d['recall']}(n{d['n']})" for lvl, d in levels.items())
+        print(f"  {name:12} {cells}")
 
     fac = factorial(config_path)
     print(f"\n== factorial multi-query x agentic (recall@B, B={fac['B']}, "
