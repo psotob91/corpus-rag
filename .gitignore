@@ -30,3 +30,7 @@ __pycache__/
 
 # test cache
 .pytest_cache/
+
+# external-validation pack (corpus data; do not commit)
+gemini_pack/
+gemini_pack.zip
