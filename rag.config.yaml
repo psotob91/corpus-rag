@@ -25,11 +25,11 @@ retrieve:
     enabled: false              # OFF by default — can hurt on table-heavy corpora
     model: BAAI/bge-reranker-base
   routing:                      # P2 query router (local vs global)
-    enabled: false              # OFF by default -> backward compatible
+    enabled: true               # ON: global/synthesis queries retrieve deeper (A/B: global recall 0.12->0.38)
     method: exemplar            # exemplar (embedding) | lexical
     margin: 0.03                # min cosine margin before trusting the exemplar vote
-    global_candidate_k: 60      # deeper candidate pool for global queries
-    global_top_k: 20            # wider returned set for global (local keeps top_k)
+    global_candidate_k: 120     # deeper candidate pool for global queries
+    global_top_k: 50            # wider returned set for global (k-sweep: evidence recovers ~k=50)
 
 server:
   name: corpus                  # MCP server name

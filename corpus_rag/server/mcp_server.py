@@ -78,8 +78,12 @@ def build_app(config_path: str = "rag.config.yaml"):
     app = FastMCP("corpus")
 
     @app.tool()
-    def search_corpus(query: str, top_k: int = 8) -> list[dict]:
-        """Hybrid (dense + BM25) search over the corpus. Returns ranked hits."""
+    def search_corpus(query: str, top_k: int | None = None) -> list[dict]:
+        """Hybrid (dense + BM25) search over the corpus. Returns ranked hits.
+
+        top_k=None lets the query router widen global/synthesis queries (per
+        rag.config.yaml retrieve.routing); pass an int to force a fixed size.
+        """
         return _search.search_corpus(query, top_k=top_k, config_path=config_path)
 
     @app.tool()

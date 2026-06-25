@@ -174,7 +174,10 @@ def generate_probes(
             continue
         probes.append({
             "id": f"global::{term}",
-            "question": term,
+            # Phrase as a synthesis query so it resembles a real global question
+            # (and the router recognizes it as global); gold stays the term's
+            # carrier chunks across docs/sections.
+            "question": f"compare and summarize across the studies: {term}",
             "scope": "global",
             "gold_chunk_ids": sorted(cids),
         })
