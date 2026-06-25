@@ -196,7 +196,9 @@ def _score(probe: dict[str, Any], retrieved_ids: list[str]) -> dict[str, float]:
     return {"recall": recall, "hit": 1.0 if inter else 0.0, "rr": rr}
 
 
-def run_eval(config_path: str = "rag.config.yaml", top_k: int | None = None) -> dict[str, Any]:
+def run_eval(
+    config_path: str = "rag.config.yaml", top_k: int | None = None, route: bool = False
+) -> dict[str, Any]:
     cfg = _config.load(config_path)
     r = _resolve(cfg)
     k = int(top_k) if top_k else r["top_k"]
@@ -223,9 +225,15 @@ def run_eval(config_path: str = "rag.config.yaml", top_k: int | None = None) -> 
             return "native"
         return "unknown"
 
+    # route=True lets the P2 router choose the retrieval width per query (global ->
+    # wider); route=False keeps the fixed eval k. Gold sets are capped at k either
+    # way, so the two runs share identical gold and are comparable.
+    search_top_k = None if route else k
     per: list[dict[str, Any]] = []
     for p in probes:
-        hits = search_corpus(p["question"], top_k=k, config_path=config_path)
+        hits = search_corpus(
+            p["question"], top_k=search_top_k, config_path=config_path, route=route
+        )
         rids = [h["chunk"]["chunk_id"] for h in hits]
         n_scan_gold = sum(
             1 for cid in p["gold_chunk_ids"] if doc_sources.get(cid_to_doc.get(cid)) == "scan"
@@ -255,6 +263,7 @@ def run_eval(config_path: str = "rag.config.yaml", top_k: int | None = None) -> 
 
     return {
         "k": k,
+        "route": route,
         "n_chunks": len(chunks),
         "n_probes": len(probes),
         "n_docs_native": sum(1 for v in doc_sources.values() if v == "native"),
@@ -376,8 +385,9 @@ def evaluate(
     config_path: str = "rag.config.yaml",
     top_k: int | None = None,
     report_dir: str | None = None,
+    route: bool = False,
 ) -> dict[str, Any]:
-    result = run_eval(config_path, top_k)
+    result = run_eval(config_path, top_k, route=route)
     decision = decide(result)
     config_dir = Path(config_path).resolve().parent
     rdir = Path(report_dir) if report_dir else config_dir / ".rag" / "eval"
@@ -387,6 +397,28 @@ def evaluate(
     )
     (rdir / "eval.md").write_text(_report_md(result, decision), encoding="utf-8")
     return {"result": result, "decision": decision, "report_dir": str(rdir)}
+
+
+def compare_routing(config_path: str = "rag.config.yaml", top_k: int | None = None) -> dict[str, Any]:
+    """A/B the P2 router: eval with routing OFF vs ON (router controls global width)."""
+    off = run_eval(config_path, top_k=top_k, route=False)
+    on = run_eval(config_path, top_k=top_k, route=True)
+
+    def _g(res: dict[str, Any], scope: str, cls: str | None = None):
+        node = res["strata"][scope][cls] if cls else res[scope]
+        return node["recall_at_k"]
+
+    def _d(scope: str, cls: str | None = None) -> float:
+        return round((_g(on, scope, cls) or 0.0) - (_g(off, scope, cls) or 0.0), 4)
+
+    return {
+        "off": off,
+        "on": on,
+        "delta_global_recall": _d("global"),
+        "delta_local_recall": _d("local"),
+        "delta_global_native": _d("global", "native"),
+        "delta_global_scan": _d("global", "scan"),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

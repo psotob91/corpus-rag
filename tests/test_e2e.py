@@ -87,3 +87,20 @@ def test_table_chunk_retrievable_with_artifact_id(corpus: Path):
     by_id = {h["chunk"]["chunk_id"]: h for h in hits}
     assert "d1-t1" in by_id, f"table chunk not retrieved; got {sorted(by_id)}"
     assert by_id["d1-t1"]["citation"].get("artifact_id") == "d1-t1"
+
+
+def test_route_none_matches_unrouted(corpus: Path):
+    # routing disabled in config -> route=None must equal route=False (byte-identical ids).
+    build_index(str(corpus))
+    a = search_corpus("hazard ratio Cox model", top_k=3, config_path=str(corpus))
+    b = search_corpus("hazard ratio Cox model", top_k=3, config_path=str(corpus), route=False)
+    assert [h["chunk"]["chunk_id"] for h in a] == [h["chunk"]["chunk_id"] for h in b]
+
+
+def test_routing_global_query_annotates_and_never_fewer(corpus: Path):
+    build_index(str(corpus))
+    q = "compare and summarize the methods across all the studies overall"
+    base = search_corpus(q, config_path=str(corpus), route=False)
+    routed = search_corpus(q, config_path=str(corpus), route=True)
+    assert len(routed) >= len(base)              # global -> wider (capped by corpus size)
+    assert routed and routed[0].get("_route", {}).get("scope") == "global"

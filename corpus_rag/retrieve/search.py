@@ -30,6 +30,7 @@ def _resolve(cfg: dict[str, Any]) -> dict[str, Any]:
     embedder_cfg = index.get("embedder", {}) or {}
     retrieve = cfg.get("retrieve", {}) or {}
     rerank_cfg = retrieve.get("rerank", {}) or {}
+    routing_cfg = retrieve.get("routing", {}) or {}
     return {
         "index_path": index.get("path", ".rag/corpus.lance"),
         "model": embedder_cfg.get("model", "BAAI/bge-small-en-v1.5"),
@@ -37,6 +38,10 @@ def _resolve(cfg: dict[str, Any]) -> dict[str, Any]:
         "top_k": int(retrieve.get("top_k", 8)),
         "rerank_enabled": bool(rerank_cfg.get("enabled", False)),
         "rerank_model": rerank_cfg.get("model", "BAAI/bge-reranker-base"),
+        "routing_enabled": bool(routing_cfg.get("enabled", False)),
+        "routing_margin": float(routing_cfg.get("margin", 0.03)),
+        "global_candidate_k": int(routing_cfg.get("global_candidate_k", 60)),
+        "global_top_k": int(routing_cfg.get("global_top_k", 20)),
     }
 
 
@@ -124,14 +129,24 @@ def _maybe_rerank(
 
 def search_corpus(
     query: str,
-    top_k: int = 8,
+    top_k: int | None = None,
     rerank: bool = False,
     config_path: str = "rag.config.yaml",
+    route: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """Hybrid (dense + BM25, RRF) search. Returns top_k SearchHit dicts."""
+    """Hybrid (dense + BM25, RRF) search. Returns top_k SearchHit dicts.
+
+    top_k=None uses retrieve.top_k from config. route=None reads
+    retrieve.routing.enabled (default off, so behaviour is unchanged). When
+    routing is on and the query is classified GLOBAL, the candidate pool deepens
+    and -- only if top_k was not passed explicitly -- the returned set widens to
+    retrieve.routing.global_top_k (keeps eval A/B apples-to-apples).
+    """
     cfg = _config.load(config_path)
     resolved = _resolve(cfg)
     rrf_k = resolved["rrf_k"]
+
+    top_k_explicit = top_k is not None
     if top_k is None:
         top_k = resolved["top_k"]
 
@@ -139,6 +154,18 @@ def search_corpus(
     table = _open_table(index_path)
 
     candidate_k = max(top_k * 4, top_k)
+
+    do_route = resolved["routing_enabled"] if route is None else route
+    route_info: dict[str, Any] | None = None
+    if do_route:
+        from corpus_rag.retrieve.router import classify_query
+        route_info = classify_query(
+            query, model=resolved["model"], margin=resolved["routing_margin"]
+        )
+        if route_info["scope"] == "global":
+            candidate_k = max(candidate_k, resolved["global_candidate_k"])
+            if not top_k_explicit:
+                top_k = resolved["global_top_k"]
 
     qvec = get_embedder(resolved["model"]).encode([query])[0]
 
@@ -169,4 +196,7 @@ def search_corpus(
     if do_rerank and hits:
         hits = _maybe_rerank(query, hits, resolved["rerank_model"])
 
-    return hits[:top_k]
+    hits = hits[:top_k]
+    if route_info and hits:
+        hits[0]["_route"] = {**route_info, "candidate_k": candidate_k, "returned_top_k": top_k}
+    return hits
