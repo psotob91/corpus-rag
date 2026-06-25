@@ -71,22 +71,49 @@ def _read_artifact(artifact_id: str, expected_kind: str, config_path: str) -> di
         return {"error": f"invalid JSON in {path}: {e}"}
 
 
-def build_app(config_path: str = "rag.config.yaml"):
-    """Construct and return the FastMCP app with all corpus tools registered."""
-    from mcp.server.fastmcp import FastMCP
+def make_tools(config_path: str = "rag.config.yaml") -> dict[str, Any]:
+    """Build the corpus tool callables bound to a config (used by build_app + tests)."""
 
-    app = FastMCP("corpus")
+    def search_corpus(
+        query: str,
+        top_k: int | None = None,
+        multi_query: bool = False,
+        sub_queries: list[str] | None = None,
+    ) -> list[dict]:
+        """Hybrid (dense + BM25) search over the corpus, with adaptive routing.
 
-    @app.tool()
-    def search_corpus(query: str, top_k: int | None = None) -> list[dict]:
-        """Hybrid (dense + BM25) search over the corpus. Returns ranked hits.
-
-        top_k=None lets the query router widen global/synthesis queries (per
-        rag.config.yaml retrieve.routing); pass an int to force a fixed size.
+        - sub_queries: YOUR own reformulations/sub-questions; fused with the query
+          (best recall for global/synthesis questions -- casts a wide net).
+        - multi_query=True: auto-decompose the query into sub-queries (no input needed).
+        - otherwise: a single routed hybrid search (cheapest). top_k=None lets the
+          router widen global queries (rag.config.yaml retrieve.routing).
+        Returns ranked hits: {chunk, score, citation}.
         """
+        if sub_queries or multi_query:
+            from corpus_rag.retrieve.multi import multi_query_search
+            return multi_query_search(
+                query, top_k=top_k, config_path=config_path, extra_queries=sub_queries
+            )
         return _search.search_corpus(query, top_k=top_k, config_path=config_path)
 
-    @app.tool()
+    def list_documents() -> list[dict]:
+        """List indexed documents with class + counts (a corpus overview)."""
+        od = _outputs_dir(config_path)
+        out = []
+        if od.is_dir():
+            for d in sorted(p for p in od.iterdir() if p.is_dir()):
+                mp = d / "document.meta.json"
+                if not mp.is_file():
+                    continue
+                try:
+                    m = json.loads(mp.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    continue
+                out.append({k: m.get(k) for k in (
+                    "id", "source", "source_confidence",
+                    "n_chunks", "n_tables", "n_figures", "n_formulas")})
+        return out
+
     def get_document(doc_id: str) -> str:
         """Return the full RAG-ready markdown for a document slug."""
         path = _outputs_dir(config_path) / doc_id / "document.md"
@@ -94,21 +121,35 @@ def build_app(config_path: str = "rag.config.yaml"):
             return f"error: document not found: {path}"
         return path.read_text(encoding="utf-8")
 
-    @app.tool()
     def get_table(artifact_id: str) -> dict:
         """Return the structured table twin for a table artifact id (<doc>-t<N>)."""
         return _read_artifact(artifact_id, "t", config_path)
 
-    @app.tool()
     def get_figure(artifact_id: str) -> dict:
         """Return the figure metadata for a figure artifact id (<doc>-f<N>)."""
         return _read_artifact(artifact_id, "f", config_path)
 
-    @app.tool()
     def get_formula(artifact_id: str) -> dict:
         """Return the formula record for a formula artifact id (<doc>-e<N>)."""
         return _read_artifact(artifact_id, "e", config_path)
 
+    return {
+        "search_corpus": search_corpus,
+        "list_documents": list_documents,
+        "get_document": get_document,
+        "get_table": get_table,
+        "get_figure": get_figure,
+        "get_formula": get_formula,
+    }
+
+
+def build_app(config_path: str = "rag.config.yaml"):
+    """Construct the FastMCP app with all corpus tools registered."""
+    from mcp.server.fastmcp import FastMCP
+
+    app = FastMCP("corpus")
+    for fn in make_tools(config_path).values():
+        app.tool()(fn)
     return app
 
 

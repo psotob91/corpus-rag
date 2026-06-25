@@ -23,13 +23,8 @@ from corpus_rag.eval.benchmark import (
     _resolve,
     generate_probes,
 )
+from corpus_rag.retrieve.multi import _SCAFFOLD, rrf as _rrf, subqueries as _subqueries
 from corpus_rag.retrieve.search import search_corpus
-
-# Synthesis scaffolding to strip when decomposing a query into sub-queries.
-_SCAFFOLD = {
-    "compare", "summarize", "summary", "across", "studies", "study", "overall",
-    "synthesize", "synthesis", "between", "differ", "differences", "consensus",
-}
 
 
 def _outputs_dir(config_path: str) -> Path:
@@ -40,25 +35,6 @@ def _outputs_dir(config_path: str) -> Path:
 
 def _ids(query: str, k: int, config_path: str) -> list[dict[str, Any]]:
     return search_corpus(query, top_k=k, config_path=config_path, route=False)
-
-
-def _rrf(ranked_lists: list[list[str]], rrf_k: int = 60) -> list[str]:
-    scores: dict[str, float] = defaultdict(float)
-    for lst in ranked_lists:
-        for rank, cid in enumerate(lst):
-            scores[cid] += 1.0 / (rrf_k + rank + 1)
-    return [cid for cid, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)]
-
-
-def _subqueries(query: str, n_sub: int) -> list[str]:
-    """Original query + its core content terms (synthesis scaffolding stripped)."""
-    subs = [query]
-    for t in _keywords(query, n_sub * 3):
-        if t not in _SCAFFOLD:
-            subs.append(t)
-        if len(subs) >= n_sub:
-            break
-    return subs
 
 
 # ── Chunk-type stratified eval: can we retrieve tables / figures / formulas? ──

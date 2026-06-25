@@ -35,8 +35,9 @@ fetch (DOI→JATS→PDF)  →  ingest (multimodal)  →  index (hybrid)  →  re
    committed; the built index is gitignored.
 4. **retrieve** — hybrid search (RRF fusion), optional cross-encoder rerank
    (**off by default** — it can hurt on table-heavy content).
-5. **server** — an **MCP server** (`corpus`) exposing `search_corpus`,
-   `get_document`, `get_table/figure/formula` to the agent in any project.
+5. **server** — an **MCP server** (`corpus`) exposing `search_corpus` (adaptive
+   routing + optional `multi_query` / agent-authored `sub_queries`), `list_documents`,
+   `get_document`, and `get_table/figure/formula` to the agent in any project.
 
 ## Why these choices (evidence)
 
