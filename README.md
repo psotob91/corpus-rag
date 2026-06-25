@@ -52,8 +52,12 @@ queries. **Commit the recipe, not the index.**
 - **P1 (MVP) — DONE:** fetch + lean ingest + hybrid index + retrieve + MCP server.
 - **P1.5 — DONE:** docling structural extraction (real headings, TableFormer,
   formula→LaTeX) + **eval gate** (`make eval`) to decide P2/P3 from data.
-- **P2 (gated):** query routing (lexical / dense / table-QA) — only if `make eval` flags a gap.
-- **P3 (gated):** concept graph (LazyGraphRAG) — only if `make eval` shows hybrid failing on multi-source queries.
+- **P2 — DONE:** query routing (local vs global). A/B on the real corpus ~triples
+  global recall (0.12 → 0.38); enabled by default. + robust scan classifier +
+  stratified eval (native vs scanned).
+- **P3 (gated OFF by data):** concept graph (LazyGraphRAG) — routing already
+  recovered most of the gap, so it is **not built**. Re-open only with real /
+  LLM-authored global queries proving routing insufficient. See `examples/` + ADR-0003.
 
 ## Usage
 

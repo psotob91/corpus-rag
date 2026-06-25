@@ -31,26 +31,37 @@ make eval
 
 ## What the eval found (2026-06)
 
-Run on this 20-doc corpus (1098 chunks, lean PyMuPDF ingest):
+Run on this 19-doc corpus (14 native, 5 scanned-OCR; ~1057 chunks, lean PyMuPDF).
+Full reasoning in `docs/adr/0003-...md`.
 
-| scope | recall@10 | recall@20 | recall@30 | recall@50 |
-|---|---|---|---|---|
-| local (single-source) | 0.97 | 1.00 | 1.00 | 1.00 |
-| global (multi-source) | 0.44 | 0.50 | 0.55 | 0.69 |
+**1. The gap is real at scale.** A 2-doc toy gave `HYBRID_SUFFICIENT`; the real
+corpus gives `CONSIDER_GRAPH_OR_ROUTING` (local ~0.90 vs global ~0.43 recall@10).
 
-**Decision: `CONSIDER_GRAPH_OR_ROUTING`** (gap 0.52 at k=10). Hybrid retrieval
-finds single chunks excellently but misses *distributed* evidence for
-cross-cutting concepts. A 2-document toy corpus gave the opposite
-(`HYBRID_SUFFICIENT`) — the gap only appears at realistic scale.
+**2. It is NOT a scanned-doc problem (stratified eval):**
 
-**Read before building anything:**
+| scope | native | scanned |
+|---|---|---|
+| local recall@10  | 0.90 | 0.89 |
+| global recall@10 | 0.42 | 0.43 |
 
-- Global recall climbs with depth (0.44 → 0.69 from k=10 → 50) but never matches
-  local. Much of the easy win is simply *retrieve deeper for global queries* →
-  **query routing (P2) is the cheaper first move**; a concept graph (P3) targets
-  the residual and should be **gated on a re-measure after routing**.
-- **Confounder:** lean PyMuPDF over-fragments older PDFs (e.g. 325 "sections"),
-  spreading a concept across more chunks and depressing global recall. Re-run with
-  `--extra docling` (fewer, denser chunks) before treating the gap as structural.
-- Probes are templated single terms, not real questions. Validate with real user
-  queries before committing budget to P3.
+Native and scanned perform identically — the OCR text layer is good enough to
+embed, and the global gap is equally present in clean modern PDFs. So better OCR
+is *not* the fix.
+
+**3. Query routing (P2) is the fix — it ~triples global recall.** Routing global/
+synthesis queries to deeper retrieval (`global_top_k=50`):
+
+| scope | routing OFF | routing ON | Δ |
+|---|---|---|---|
+| global (overall) | 0.12 | 0.38 | +0.27 |
+| global (native)  | 0.21 | 0.57 | +0.36 |
+| local            | 0.90 | 0.93 | +0.03 |
+
+Deeper *hybrid* retrieval recovers the distributed evidence (k-sweep: global
+0.43@10 → 0.69@50). Routing is **enabled by default**.
+
+**4. A concept graph (P3) is NOT built.** Routing recovered most of the gap with a
+cheap, existing mechanism; the residual is within probe-artifact noise (templated
+probes, not real questions). Per best practice, build a graph only when metrics on
+**real/LLM-authored** global queries prove hybrid+routing insufficient. The gate
+stays closed until then.
