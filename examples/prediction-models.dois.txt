@@ -1,0 +1,24 @@
+# Example corpus — "Clinical Prediction Models" (from the user's Zotero CPM library)
+# Reproduce the eval corpus: fetch these into corpus/_raw, then `make ingest` / `make index` / `make eval`.
+# We ship the DOIs, NOT the PDFs (copyright + the repo's "commit the recipe, not the data" principle).
+# DOIs below are from the Zotero CPM library or reliably derived from the filename identifier.
+
+10.1111/j.2517-6161.1972.tb00899.x                                # Cox 1972 — Regression Models and Life-Tables (JRSS-B)
+10.1080/01621459.1983.10477973                                    # Efron 1983 — Estimating the Error Rate of a Prediction Rule (JASA)
+10.2333/bhmk.12.17_1                                              # Efron & Tibshirani 1985 — The Bootstrap Method (Behaviormetrika)
+10.1093/jnci/86.11.829                                           # Altman et al. 1994 — Dangers of Using "Optimal" Cutpoints (JNCI)
+10.1002/(sici)1097-0258(19960229)15:4<361::aid-sim168>3.0.co;2-4 # Harrell et al. 1996 — Multivariable Prognostic Models (Stat Med)
+10.1002/sim.7992                                                 # Riley et al. 2019 — Minimum sample size ... Part II (Stat Med)
+10.1136/bmj.m441                                                 # Riley et al. 2020 — Calculating the sample size required (BMJ)
+10.1093/jamia/ocad006                                            # Singh et al. 2023 — Net benefit of ML under resource constraints (JAMIA)
+10.1136/bmj-2022-073538                                          # Snell et al. 2023 — TRIPOD-SRMA (BMJ)   [filename: snek073538]
+10.1136/bmj-2024-080749                                          # Riley et al. 2025 — Uncertainty of risk estimates (BMJ)
+10.1186/s12882-025-04357-z                                       # BMC Nephrology 2025 — derived from filename s12882-025-04357-z
+10.1101/2025.11.26.25341085                                      # medRxiv preprint — derived from filename 2025.11.26.25341085
+10.48550/arXiv.2605.21566                                        # arXiv preprint — derived from filename 2605.21566
+
+# Not yet resolved to a DOI (fill from Zotero CPM or the publisher landing page):
+#   e093471.full       — BMJ-family article, id e093471
+#   medsci-14-00287    — MDPI Medical Sciences
+#   RRI-07-2024        — journal code RRI-07-2024
+#   7691-...-46072-... — anonymized OJS export (no public identifier in the filename)

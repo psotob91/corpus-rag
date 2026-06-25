@@ -79,8 +79,9 @@ Tested end-to-end on a real open-access paper (PLOS ONE `10.1371/journal.pone.01
 - **fetch → ingest → index → search → MCP**: docling ingest yields 23 sections
   with real heading titles, 5 tables, 16 figures; `search_corpus` returns the
   paper with citations; the MCP `corpus` server lists 5 tools.
-- **eval gate**: local recall@10 = 0.97, global recall@10 = 0.88 →
-  `HYBRID_SUFFICIENT` (no graph justified on this corpus; re-run on yours).
+- **eval gate**: on a 2-doc toy → `HYBRID_SUFFICIENT`; on a **real 20-doc corpus**
+  (`examples/`) → `CONSIDER_GRAPH_OR_ROUTING` (local 0.97 vs global 0.44 recall@10).
+  The local-vs-global gap appears only at scale — see `examples/README.md`.
 
 Hermetic tests (no network/models): `tests/test_e2e.py` (build+search),
 `tests/test_eval.py` (the gate), `tests/test_docling_mapping.py` (docling mapping).
